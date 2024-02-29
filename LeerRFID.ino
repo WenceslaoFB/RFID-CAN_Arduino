@@ -1,4 +1,3 @@
-
 #if 0
 #include <SPI.h>
 #include <PN532_SPI.h>
@@ -22,7 +21,7 @@ NfcAdapter nfc = NfcAdapter(pn532_i2c);
 #include "AA_MCP2515.h"
 
 // TODO: modify CAN_BITRATE, CAN_PIN_CS(Chip Select) pin, and CAN_PIN_INT(Interrupt) pin as required.
-const CANBitrate::Config CAN_BITRATE = CANBitrate::Config_8MHz_500kbps;
+const CANBitrate::Config CAN_BITRATE = CANBitrate::Config_8MHz_250kbps;
 const uint8_t CAN_PIN_CS = 53;
 const int8_t CAN_PIN_INT = 2;
 
@@ -30,11 +29,18 @@ CANConfig config(CAN_BITRATE, CAN_PIN_CS, CAN_PIN_INT);
 CANController CAN(config);
 
 byte payloadArray[8] = {0};
+const int PN532_RESET = 4; // Pin digital utilizado para el RESET del PN532
+
+void resetPN532();
+void decodeMsj(NfcTag &tag);
 
 void setup(void) {
     Serial.begin(9600);
     //Serial.println("NDEF Reader");
     nfc.begin();
+
+    pinMode(PN532_RESET, OUTPUT); // Configura el pin de RESET como salida
+    digitalWrite(PN532_RESET, HIGH); // Mantiene el módulo PN532 activo (sin reset)
 
     while(CAN.begin(CANController::Mode::Normal) != CANController::OK) {
     Serial.println("CAN begin FAIL - delaying for 1 second");
@@ -49,19 +55,38 @@ void loop(void) {
     {
         NfcTag tag = nfc.read();
         //tag.getNdefMessage();
-            int messageLength = tag.getNdefMessage().getRecordCount();
+        if (!tag.hasNdefMessage()) {
+            Serial.println("Tag is not NDEF formatted or read error occurred.");
+            resetPN532();
+        } else {
+            // El tag está formateado con NDEF, procesa el mensaje
+            decodeMsj(tag);
+        }
+    }
+    delay(500);
+}
+
+void resetPN532() {
+    digitalWrite(PN532_RESET, LOW); // Activa el RESET en el PN532
+    delay(10); // Espera un poco para asegurar que el PN532 se reinicie
+    digitalWrite(PN532_RESET, HIGH); // Desactiva el RESET, permitiendo que el PN532 funcione nuevamente
+    delay(50); // Da tiempo al PN532 para que se reinicie completamente
+}
+
+void decodeMsj(NfcTag &tag){
+                  int messageLength = tag.getNdefMessage().getRecordCount();
             for (int i = 0; i < messageLength; i++) {
                 NdefRecord record = tag.getNdefMessage().getRecord(i);
                 
-                // Obtén el payload del registro
+                // Se obtiene el payload del registro
                 int payloadLength = record.getPayloadLength();
                 byte payload[payloadLength];
                 record.getPayload(payload);
 
-                // Asegúrate de que el payload es suficientemente largo para descartar los primeros 3 bytes
+                // Se asegura de que el payload es suficientemente largo para descartar los primeros 3 bytes
                 if (payloadLength > 3) {
                     // Define un array para almacenar hasta 8 bytes del payload, después de descartar los primeros 3 bytes
-                    payloadArray[0] = {0};  // Inicializa el array con 0s
+                    payloadArray[0] = {0};  // Reinicio del array con 0s
                     payloadArray[1] = {0};
                     payloadArray[2] = {0};
                     payloadArray[3] = {0};
@@ -77,29 +102,24 @@ void loop(void) {
                     memcpy(payloadArray, payload + 3, bytesToCopy);
 
                     // Opcional: Imprime el array payloadArray para verificar
-                    Serial.print("Payload Array (after discarding 3 bytes): ");
+                    Serial.print("Payload (sin primeros 3 bytes): ");
                     for (int j = 0; j < bytesToCopy; j++) {
                         Serial.print(payloadArray[j], HEX);
                         Serial.print(" ");
-                    }
-                    Serial.println();//psobile indicador de q hubo error, imprime msj de error
+                    }  
+                    Serial.println();
                 } else {
-                    Serial.println("Payload is too short to discard first 3 bytes.");
+                    Serial.println("Payload demasiado corto para descartar primeros 3 bytes.");
                 }
             }         
       // transmit
-      CANFrame frame(0x100, payloadArray, sizeof(payloadArray));
+      CANFrame frame(0x100, payloadArray, sizeof(payloadArray));//id:0x100 
       CAN.write(frame);
       frame.print("CAN TX");
-
-      // modify data to simulate updated data from sensor, etc
-      //data[0] += 1;
-
-      //delay(2000);
-        
-    }
-    delay(500);
 }
+
+
+
 
 
 
